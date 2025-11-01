@@ -297,61 +297,6 @@ def run_mcmc_1d():
     plt.savefig(OUTPUT_DIR / "kan_1d_mcmc_map_loss.png", dpi=150, bbox_inches="tight")
     print("MAP loss curve saved!")
 
-    mse_rwm = float(np.mean((mean_rwm - y_test_cpu) ** 2))
-    mae_rwm = float(np.mean(np.abs(mean_rwm - y_test_cpu)))
-    mse_hmc = float(np.mean((mean_hmc - y_test_cpu) ** 2))
-    mae_hmc = float(np.mean(np.abs(mean_hmc - y_test_cpu)))
-    print(f"\nRWM Metrics -> MSE: {mse_rwm:.6f}, MAE: {mae_rwm:.6f}")
-    print(f"HMC Metrics -> MSE: {mse_hmc:.6f}, MAE: {mae_hmc:.6f}")
-
-    with torch.no_grad():
-        for sample in samples:
-            vector_to_parameters(sample, model.parameters())
-            preds.append(model(x_test))
-        vector_to_parameters(theta_map, model.parameters())
-    preds = torch.stack(preds)
-    mean_pred = preds.mean(0).cpu().squeeze().numpy()
-    std_pred = preds.std(0).cpu().squeeze().numpy()
-
-    x_train_cpu = x_train.cpu().squeeze().numpy()
-    y_train_cpu = y_train.cpu().squeeze().numpy()
-    x_test_cpu = x_test.cpu().squeeze().numpy()
-    y_test_cpu = y_test.cpu().squeeze().numpy()
-
-    plt.figure(figsize=(10, 5))
-    plt.plot(x_test_cpu, y_test_cpu, label="Ground Truth", color="black", linewidth=2)
-    plt.plot(x_test_cpu, mean_pred, label="MCMC Mean", color="green", linewidth=2)
-    plt.fill_between(x_test_cpu,
-                     mean_pred - 2 * std_pred,
-                     mean_pred + 2 * std_pred,
-                     alpha=0.2, color="green", label="±2σ")
-    plt.scatter(x_train_cpu, y_train_cpu, s=10, alpha=0.4, label="Train Data")
-    plt.xlabel("x")
-    plt.ylabel("y")
-    plt.title("KAN 1D MCMC Posterior Predictive")
-    plt.legend()
-    plt.grid(True, alpha=0.3)
-    plt.savefig(OUTPUT_DIR / "kan_1d_mcmc_fit.png", dpi=150, bbox_inches="tight")
-    print("\nMCMC fit visualisation saved!")
-
-    plt.figure(figsize=(8, 4))
-    plt.plot(map_losses)
-    plt.xlabel("Epoch")
-    plt.ylabel("Negative Log Posterior")
-    plt.title("MAP Training Loss")
-    plt.yscale("log")
-    plt.grid(True, alpha=0.3)
-    plt.savefig(OUTPUT_DIR / "kan_1d_mcmc_map_loss.png", dpi=150, bbox_inches="tight")
-    print("MAP loss curve saved!")
-
-    mse = float(np.mean((mean_pred - y_test_cpu) ** 2))
-    mae = float(np.mean(np.abs(mean_pred - y_test_cpu)))
-    print(f"\nEvaluation metrics:")
-    print(f"MSE: {mse:.6f}")
-    print(f"MAE: {mae:.6f}")
-
-
-if __name__ == "__main__":
     torch.manual_seed(42)
     np.random.seed(42)
 
