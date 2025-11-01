@@ -1,0 +1,2 @@
+[console_scripts]
+bayesian-kan = bayesian_kan.run:main
