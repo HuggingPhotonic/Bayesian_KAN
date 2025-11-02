@@ -1,0 +1,28 @@
+{
+  "method": "vi",
+  "basis": "bspline",
+  "dimension": 1,
+  "target": "sin_cos",
+  "layer_sizes": [
+    16,
+    1
+  ],
+  "basis_kwargs": {
+    "grid_size": 4,
+    "spline_order": 2
+  },
+  "dataset": {
+    "n_train": 32,
+    "noise_std": 0.05,
+    "range_min": -1.0,
+    "range_max": 1.0,
+    "eval_points_1d": 20,
+    "eval_points_2d": 60,
+    "seed_offset": 0
+  },
+  "final_loss": 0.5294243693351746,
+  "final_reconstruction": 0.5293442010879517,
+  "final_kl": 384.8516845703125,
+  "mean_std": 0.2556195855140686,
+  "max_std": 0.26425668597221375
+}
