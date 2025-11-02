@@ -1,8 +1,15 @@
 from __future__ import annotations
 
 from typing import Sequence
+from pathlib import Path
+import sys
 import torch
 import torch.nn as nn
+
+if __package__ in (None, ""):
+    _ROOT = Path(__file__).resolve().parents[1]
+    if str(_ROOT) not in sys.path:
+        sys.path.insert(0, str(_ROOT))
 
 from bases import (
     ChebyshevBasis,

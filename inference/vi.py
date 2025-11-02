@@ -70,9 +70,9 @@ def train_vi(
         recon_losses.append(recon.detach().cpu())
         kl_terms.append(kl.detach().cpu())
         progress.set_postfix(
-            loss=float(loss),
-            recon=float(recon),
-            kl=float(kl),
+            loss=loss.detach().item(),
+            recon=recon.detach().item(),
+            kl=kl.detach().item(),
             beta=kl_weight,
             lr=optimizer.param_groups[0]["lr"],
         )

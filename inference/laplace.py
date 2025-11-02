@@ -55,7 +55,10 @@ def train_map(
         optimizer.step()
         scheduler.step()
         losses.append(nlp.detach().cpu())
-        progress.set_postfix(loss=float(nlp), lr=optimizer.param_groups[0]["lr"])
+        progress.set_postfix(
+            loss=nlp.detach().item(),
+            lr=optimizer.param_groups[0]["lr"],
+        )
     return torch.stack(losses)
 
 

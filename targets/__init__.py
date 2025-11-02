@@ -1,7 +1,23 @@
 """
-Target function registry.
+Target function registry and utilities.
 """
 
-from .functions import get_target_function, TARGETS
+from .functions import (
+    TARGETS,
+    TARGET_DIMS,
+    get_target_function,
+    resolve_target,
+    get_function_info,
+    list_functions,
+    generate_data,
+)
 
-__all__ = ["get_target_function", "TARGETS"]
+__all__ = [
+    "TARGETS",
+    "TARGET_DIMS",
+    "get_target_function",
+    "resolve_target",
+    "get_function_info",
+    "list_functions",
+    "generate_data",
+]

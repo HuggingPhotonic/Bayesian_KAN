@@ -1,0 +1,4 @@
+tqdm>=4.64
+numpy>=1.23
+matplotlib>=3.7
+torch>=2.0

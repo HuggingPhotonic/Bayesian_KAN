@@ -50,6 +50,63 @@ def plot_training_curves(
     return output_path
 
 
+def plot_training_curve_panels(
+    losses: Sequence[float] | torch.Tensor,
+    recon_losses: Sequence[float] | torch.Tensor,
+    kl_terms: Sequence[float] | torch.Tensor,
+    *,
+    title: str = "VI Training Breakdown",
+    output_dir: Path | None = None,
+) -> dict[str, Path]:
+    loss_np = _to_numpy(torch.as_tensor(losses))
+    recon_np = _to_numpy(torch.as_tensor(recon_losses))
+    kl_np = _to_numpy(torch.as_tensor(kl_terms))
+
+    epochs = np.arange(len(loss_np))
+
+    metric_specs = [
+        ("training_curve_loss", loss_np, "Total Loss", "tab:blue"),
+        ("training_curve_reconstruction", recon_np, "Reconstruction (MSE)", "tab:green"),
+        ("training_curve_kl", kl_np, "KL Divergence", "tab:orange"),
+    ]
+
+    if output_dir is None:
+        output_dir = Path("training_curves_panels")
+    else:
+        output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    paths: dict[str, Path] = {}
+    for key, values, label, color in metric_specs:
+        fig, ax = plt.subplots(figsize=(4, 4))
+        ax.plot(epochs, values, color=color, linewidth=1.5)
+        ax.set_title(label)
+        ax.set_xlabel("Epoch")
+        ax.set_ylabel("Value")
+        ax.grid(alpha=0.3)
+        fig.tight_layout()
+        metric_path = output_dir / f"{key}.png"
+        fig.savefig(metric_path, dpi=150)
+        plt.close(fig)
+        paths[key] = metric_path
+
+    fig, axes = plt.subplots(1, 3, figsize=(12, 4), sharex=True)
+    fig.suptitle(title)
+    for ax, (_, values, label, color) in zip(axes, metric_specs):
+        ax.plot(epochs, values, color=color, linewidth=1.5)
+        ax.set_title(label)
+        ax.set_xlabel("Epoch")
+        ax.grid(alpha=0.3)
+    axes[0].set_ylabel("Value")
+    fig.tight_layout()
+    composite_path = output_dir / "training_curves_triptych.png"
+    fig.savefig(composite_path, dpi=150)
+    plt.close(fig)
+    paths["training_curve_triptych"] = composite_path
+
+    return paths
+
+
 def plot_1d_regression(
     x_eval: torch.Tensor | np.ndarray,
     target: torch.Tensor | np.ndarray,
