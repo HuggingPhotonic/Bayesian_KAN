@@ -1,10 +1,9 @@
 """
-Parameter noise robustness experiment using Metropolis MCMC inference.
+Input noise robustness experiment using Metropolis MCMC inference.
 
-This script mirrors the deterministic vs Bayesian comparison but swaps the
-variational model for a Metropolis sampler.  It trains a deterministic KAN and
-an MCMC-backed KAN (with MAP warm-up), injects Gaussian noise into parameters,
-and records/visualises how predictions degrade under perturbations.
+This script mirrors the deterministic vs VI comparison but replaces the
+variational model with a MAP-warm-started Metropolis sampler to study how
+posterior averaging copes with input perturbations.
 """
 
 from __future__ import annotations
@@ -13,7 +12,7 @@ import json
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Sequence, Tuple
+from typing import Dict, List, Sequence
 
 import matplotlib.pyplot as plt
 import torch
@@ -27,23 +26,30 @@ from config import set_seed
 from inference.laplace import LaplaceConfig, train_map
 from inference.metropolis import MetropolisConfig, run_metropolis
 from models.kan import build_kan
-from kan_noise_test.noise_in_parameters_vi import (
+from targets import resolve_target
+from training.trainer import DeterministicConfig, train_deterministic
+from noise_in_parameters_vi import (
     DatasetBundle,
     NoiseExperimentSettings,
-    SweepEntry,
-    _parameter_scale,
     _resolve_device,
     make_dataset,
-    run_noise_sweep,
 )
-from training.trainer import DeterministicConfig, train_deterministic
+from noise_in_input_vi import (
+    InputNoiseEntry,
+    InputNoiseSettings,
+    add_noise_to_inputs,
+    evaluate_deterministic_input_noise,
+    plot_mse_curve,
+    plot_predictions_1d,
+    prepare_noisy_inputs,
+)
 
 
 @dataclass
-class MCMCSettings(NoiseExperimentSettings):
-    """Extension of the base settings with Metropolis-specific knobs."""
+class MCMCInputSettings(InputNoiseSettings):
+    """Extension with Metropolis-specific controls."""
 
-    results_folder: str = "parameter_noise_mcmc"
+    results_folder: str = "input_noise_mcmc"
     metropolis_samples: int = 800
     metropolis_burn_in: int = 600
     metropolis_step_size: float = 2e-4
@@ -55,65 +61,6 @@ class MCMCSettings(NoiseExperimentSettings):
     map_weight_decay: float = 2e-4
 
 
-def _plot_mse_curve_mcmc(
-    deterministic: Sequence[SweepEntry],
-    mcmc: Sequence[SweepEntry],
-    output_path: Path,
-) -> None:
-    plt.figure(figsize=(7, 4.5))
-    det_noise = [entry.noise_std for entry in deterministic]
-    det_mse = [entry.metrics["mse"] for entry in deterministic]
-    mcmc_noise = [entry.noise_std for entry in mcmc]
-    mcmc_mse = [entry.metrics["mse"] for entry in mcmc]
-    plt.plot(det_noise, det_mse, marker="o", label="Deterministic")
-    plt.plot(mcmc_noise, mcmc_mse, marker="^", label="Metropolis MCMC")
-    plt.xlabel("Parameter noise std (relative)")
-    plt.ylabel("MSE on evaluation grid")
-    plt.title("Prediction error under parameter noise")
-    plt.grid(True, alpha=0.3)
-    plt.legend()
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    plt.tight_layout()
-    plt.savefig(output_path, dpi=150, bbox_inches="tight")
-    plt.close()
-
-
-def _plot_predictions_1d_mcmc(
-    bundle: DatasetBundle,
-    deterministic: SweepEntry,
-    mcmc_entry: SweepEntry,
-    title: str,
-    output_path: Path,
-) -> None:
-    x = bundle.X_eval.squeeze(-1).cpu().numpy()
-    target = bundle.y_eval.squeeze(-1).cpu().numpy()
-    det_mean = deterministic.mean.squeeze(-1).numpy()
-    mcmc_mean = mcmc_entry.mean.squeeze(-1).numpy()
-    mcmc_std = mcmc_entry.std.squeeze(-1).numpy()
-
-    plt.figure(figsize=(8, 5))
-    plt.plot(x, target, label="Target", color="black", linewidth=1.5)
-    plt.plot(x, det_mean, label="Deterministic mean", color="#1f77b4", linewidth=1.2)
-    plt.plot(x, mcmc_mean, label="MCMC mean", color="#2ca02c", linewidth=1.2)
-    plt.fill_between(
-        x,
-        mcmc_mean - 2 * mcmc_std,
-        mcmc_mean + 2 * mcmc_std,
-        color="#2ca02c",
-        alpha=0.2,
-        label="MCMC ±2σ",
-    )
-    plt.xlabel("x")
-    plt.ylabel("y")
-    plt.title(title)
-    plt.grid(True, alpha=0.3)
-    plt.legend()
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    plt.tight_layout()
-    plt.savefig(output_path, dpi=150, bbox_inches="tight")
-    plt.close()
-
-
 def _subset_samples(samples: torch.Tensor, max_samples: int) -> torch.Tensor:
     if samples.numel() == 0:
         raise ValueError("MCMC produced no samples; cannot evaluate robustness.")
@@ -122,38 +69,79 @@ def _subset_samples(samples: torch.Tensor, max_samples: int) -> torch.Tensor:
     return samples[:max_samples]
 
 
-def evaluate_mcmc_with_noise(
+def evaluate_mcmc_input_noise(
     template: torch.nn.Module,
     samples: torch.Tensor,
     bundle: DatasetBundle,
     noise_std: float,
-) -> Tuple[torch.Tensor, torch.Tensor, Dict[str, float]]:
+    settings: MCMCInputSettings,
+    target_fn,
+    inputs_override: torch.Tensor | None = None,
+) -> InputNoiseEntry:
+    if inputs_override is not None:
+        X_noisy = inputs_override.to(bundle.X_eval.device)
+    else:
+        X_noisy = add_noise_to_inputs(
+            bundle.X_eval,
+            noise_std,
+            domain=bundle.domain,
+            clamp=settings.clamp_to_domain,
+        )
     preds: List[torch.Tensor] = []
     for vec in samples:
         vector_to_parameters(vec.clone(), template.parameters())
-        if noise_std > 0:
-            for name, param in template.named_parameters():
-                if "log_var" in name:
-                    continue
-                scale = _parameter_scale(param)
-                param.data.add_(torch.randn_like(param) * noise_std * scale)
-        output, _ = template(bundle.X_eval, sample=False)
+        output, _ = template(X_noisy, sample=False)
         preds.append(output.detach().cpu())
-
     stacked = torch.stack(preds)
     mean = stacked.mean(dim=0)
     std = stacked.std(dim=0)
-    target = bundle.y_eval.detach().cpu()
-    errors = mean - target
-    mse = float(torch.mean(errors ** 2).item())
-    mae = float(torch.mean(errors.abs()).item())
-    max_abs = float(torch.max(errors.abs()).item())
+    target = target_fn(X_noisy)
+    if target.dim() == 1:
+        target = target.unsqueeze(-1)
+    errors = mean - target.detach().cpu()
+    mse = float(torch.mean(errors ** 2))
+    mae = float(torch.mean(errors.abs()))
+    max_abs = float(torch.max(errors.abs()))
     metrics = {"mse": mse, "mae": mae, "max_abs_err": max_abs}
-    return mean, std, metrics
+    return InputNoiseEntry(
+        noise_std=float(noise_std),
+        inputs=X_noisy.detach().cpu(),
+        target=target.detach().cpu(),
+        mean=mean,
+        std=std,
+        metrics=metrics,
+    )
+
+
+def run_mcmc_noise_sweep(
+    template: torch.nn.Module,
+    samples: torch.Tensor,
+    bundle: DatasetBundle,
+    noise_levels: Sequence[float],
+    settings: MCMCInputSettings,
+    target_fn,
+    prepared_inputs: Dict[float, torch.Tensor] | None = None,
+) -> List[InputNoiseEntry]:
+    entries: List[InputNoiseEntry] = []
+    for level in noise_levels:
+        override = None
+        if prepared_inputs is not None and level in prepared_inputs:
+            override = prepared_inputs[level]
+        entry = evaluate_mcmc_input_noise(
+            template,
+            samples,
+            bundle,
+            level,
+            settings,
+            target_fn,
+            inputs_override=override,
+        )
+        entries.append(entry)
+    return entries
 
 
 def main() -> None:
-    settings = MCMCSettings()
+    settings = MCMCInputSettings()
     device = _resolve_device(settings.device)
     set_seed(settings.seed)
 
@@ -161,6 +149,9 @@ def main() -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
 
     bundle = make_dataset(settings, device)
+    _, target_fn = resolve_target(settings.target, settings.dim)
+
+    prepared_inputs = prepare_noisy_inputs(bundle, settings.input_noise_levels, settings)
 
     # Deterministic baseline
     det_model = build_kan(
@@ -179,14 +170,18 @@ def main() -> None:
         grad_clip=1.0,
     )
     det_losses = train_deterministic(det_model, bundle.X_train, bundle.y_train, det_config)
-    det_sweep = run_noise_sweep(
-        det_model,
-        bundle,
-        settings.param_noise_levels,
-        variational=False,
-        eval_samples=1,
-        device=device,
-    )
+
+    det_sweep = [
+        evaluate_deterministic_input_noise(
+            det_model,
+            bundle,
+            level,
+            target_fn,
+            settings=settings,
+            inputs_override=prepared_inputs.get(level),
+        )
+        for level in settings.input_noise_levels
+    ]
 
     # MCMC model with MAP warm-up
     mcmc_model = build_kan(
@@ -235,41 +230,38 @@ def main() -> None:
     ).to(device)
     eval_model.load_state_dict(map_state)
 
-    mcmc_sweep: List[SweepEntry] = []
-    for level in settings.param_noise_levels:
-        eval_model.load_state_dict(map_state)
-        mean, std, metrics = evaluate_mcmc_with_noise(
-            eval_model,
-            samples,
-            bundle,
-            float(level),
-        )
-        mcmc_sweep.append(
-            SweepEntry(noise_std=float(level), mean=mean, std=std, metrics=metrics)
-        )
+    mcmc_sweep = run_mcmc_noise_sweep(
+        eval_model,
+        samples,
+        bundle,
+        settings.input_noise_levels,
+        settings,
+        target_fn,
+        prepared_inputs=prepared_inputs,
+    )
 
-    _plot_mse_curve_mcmc(det_sweep, mcmc_sweep, output_dir / "mse_vs_parameter_noise.png")
+    plot_mse_curve(det_sweep, mcmc_sweep, output_dir / "mse_vs_input_noise.png")
     if bundle.X_eval.shape[1] == 1:
         baseline_det = det_sweep[0]
         baseline_mcmc = mcmc_sweep[0]
         worst_det = det_sweep[-1]
         worst_mcmc = mcmc_sweep[-1]
-        _plot_predictions_1d_mcmc(
+        plot_predictions_1d(
             bundle,
             baseline_det,
             baseline_mcmc,
-            title="Predictions without parameter noise",
+            title="Predictions without input noise",
             output_path=output_dir / "predictions_baseline.png",
         )
-        _plot_predictions_1d_mcmc(
+        plot_predictions_1d(
             bundle,
             worst_det,
             worst_mcmc,
-            title=f"Predictions with parameter noise std={settings.param_noise_levels[-1]:.2f}",
+            title=f"Predictions with input noise std={settings.input_noise_levels[-1]:.2f}",
             output_path=output_dir / "predictions_noisy.png",
         )
 
-    # Training/metropolis diagnostics
+    # Training and MAP diagnostics
     plt.figure(figsize=(7, 4))
     plt.plot(det_losses.cpu().numpy())
     plt.xlabel("Epoch")
@@ -295,10 +287,9 @@ def main() -> None:
             "target": settings.target,
             "dim": settings.dim,
             "n_train": settings.n_train,
-            "train_noise_std": settings.train_noise_std,
             "layer_sizes": list(settings.layer_sizes),
             "basis_kwargs": dict(settings.basis_kwargs),
-            "param_noise_levels": list(settings.param_noise_levels),
+            "input_noise_levels": list(settings.input_noise_levels),
             "metropolis": {
                 "n_samples": settings.metropolis_samples,
                 "burn_in": settings.metropolis_burn_in,
