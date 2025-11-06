@@ -19,6 +19,7 @@ if str(ROOT) not in sys.path:
 from inference import MetropolisConfig, run_metropolis
 from photonic_version.photonic_coherent_hw_kan import HardwareCoherentPhotonicKAN
 from photonic_version.photonic_kan import target_function
+from photonic_version.utils import get_device
 
 
 def summarise_parameters(model: nn.Module) -> None:
@@ -29,7 +30,7 @@ def summarise_parameters(model: nn.Module) -> None:
 
 def run_metropolis_inference() -> None:
     torch.manual_seed(42)
-    device = torch.device("cpu")
+    device = get_device()
 
     n_train = 256
     X_train = torch.rand(n_train, 1, device=device) * 2 - 1
@@ -96,4 +97,3 @@ def run_metropolis_inference() -> None:
 
 if __name__ == "__main__":
     run_metropolis_inference()
-

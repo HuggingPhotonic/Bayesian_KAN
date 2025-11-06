@@ -19,6 +19,7 @@ if str(ROOT) not in sys.path:
 from inference import VIConfig, train_vi
 from photonic_version.hardware_bayes import BayesianHardwarePhotonicCoherentBasis
 from photonic_version.photonic_kan import target_function
+from photonic_version.utils import get_device
 
 
 class BayesianHardwareCoherentPhotonicKAN(nn.Module):
@@ -45,7 +46,7 @@ def summarise_parameters(model: nn.Module) -> None:
 
 def run_variational_training() -> None:
     torch.manual_seed(42)
-    device = torch.device("cpu")
+    device = get_device()
 
     n_train = 512
     X_train = torch.rand(n_train, 1, device=device) * 2 - 1
@@ -125,4 +126,3 @@ def run_variational_training() -> None:
 
 if __name__ == "__main__":
     run_variational_training()
-

@@ -19,6 +19,7 @@ if str(ROOT) not in sys.path:
 
 from photonic_version.basic_function2 import PhotonicIncoherentBasis
 from photonic_version.photonic_kan import target_function
+from photonic_version.utils import get_device
 
 
 class IncoherentPhotonicKAN(nn.Module):
@@ -58,7 +59,7 @@ def summarise_parameters(model: nn.Module) -> None:
 def train_incoherent_kan() -> None:
     torch.manual_seed(42)
 
-    device = torch.device("cpu")
+    device = get_device()
 
     n_train = 512
     # Random samples on [-1, 1]; viewed as wavelength control inputs.
@@ -121,8 +122,11 @@ def train_incoherent_kan() -> None:
 
     # Plot fitted function versus the analytic target.
     plt.figure(figsize=(10, 4))
-    plt.plot(grid.squeeze().cpu().numpy(), truth_grid.squeeze().cpu().numpy(), label="Target", linewidth=1.5)
-    plt.plot(grid.squeeze().cpu().numpy(), preds_grid.squeeze().cpu().numpy(), label="Incoherent Photonic KAN", linewidth=1.2)
+    x_plot = grid.squeeze().cpu().numpy()
+    truth_plot = truth_grid.squeeze().cpu().numpy()
+    pred_plot = preds_grid.squeeze().cpu().numpy()
+    plt.plot(x_plot, truth_plot, label="Target", linewidth=1.5)
+    plt.plot(x_plot, pred_plot, label="Incoherent Photonic KAN", linewidth=1.2)
     plt.xlabel("x")
     plt.ylabel("y")
     plt.title("Photonic KAN fit (incoherent)")

@@ -28,6 +28,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from photonic_version.basis import PhotonicTorchBasis
+from photonic_version.utils import get_device
 
 
 def target_function(x: torch.Tensor) -> torch.Tensor:
@@ -70,7 +71,7 @@ def summarise_parameters(model: nn.Module) -> None:
 def train_photonic_kan() -> None:
     torch.manual_seed(42)
 
-    device = torch.device("cpu")  # Photontorch components operate on CPU
+    device = get_device()  # Photontorch components run on CPU internally as needed
 
     n_train = 512
     X_train = torch.rand(n_train, 1, device=device) * 2 - 1  # [-1, 1]
@@ -128,8 +129,11 @@ def train_photonic_kan() -> None:
     plt.close()
 
     plt.figure(figsize=(10, 4))
-    plt.plot(grid.squeeze().cpu().numpy(), truth_grid.squeeze().cpu().numpy(), label="Target", linewidth=1.5)
-    plt.plot(grid.squeeze().cpu().numpy(), preds_grid.squeeze().cpu().numpy(), label="Photonic KAN", linewidth=1.2)
+    x_plot = grid.squeeze().cpu().numpy()
+    truth_plot = truth_grid.squeeze().cpu().numpy()
+    pred_plot = preds_grid.squeeze().cpu().numpy()
+    plt.plot(x_plot, truth_plot, label="Target", linewidth=1.5)
+    plt.plot(x_plot, pred_plot, label="Photonic KAN", linewidth=1.2)
     plt.xlabel("x")
     plt.ylabel("y")
     plt.title("Photonic KAN fit")
@@ -144,4 +148,3 @@ def train_photonic_kan() -> None:
 
 if __name__ == "__main__":
     train_photonic_kan()
-
