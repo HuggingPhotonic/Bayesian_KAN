@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Dict, Any
+import matplotlib.pyplot as plt
 import torch
 from torch.nn.utils import parameters_to_vector, vector_to_parameters
 from tqdm.auto import trange
@@ -37,6 +38,29 @@ def run_metropolis(
     X_eval: torch.Tensor,
     config: MetropolisConfig,
 ) -> MCMCResult:
+    optimizer = torch.optim.Adam(model.parameters(), lr=5e-4, weight_decay=1e-5)
+    map_progress = trange(500, desc="Metropolis MAP warmup", leave=False)
+    map_losses = []
+    for epoch in map_progress:
+        optimizer.zero_grad()
+        nlp = negative_log_posterior(
+            model, X_train, y_train, config.noise_var, config.prior_var
+        )
+        nlp.backward()
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+        optimizer.step()
+        map_losses.append(nlp.detach().cpu())
+        map_progress.set_postfix(loss=nlp.item())
+
+    plt.figure(figsize=(8, 3))
+    plt.plot(torch.stack(map_losses).numpy())
+    plt.xlabel("Epoch")
+    plt.ylabel("Negative log posterior")
+    plt.title("Metropolis MAP warmup")
+    plt.grid(True, alpha=0.3)
+    plt.tight_layout()
+    map_plot = plt.gcf()
+
     theta_map = parameters_to_vector(model.parameters()).detach()
     current = theta_map.clone()
     with torch.no_grad():
@@ -67,6 +91,10 @@ def run_metropolis(
     acceptance_rate = accept / total
     sample_tensor = torch.stack(samples) if samples else torch.empty(0)
     mean, std = posterior_stats(model, sample_tensor, X_eval)
+    output_dir = Path("photonic_version/results/hardware_coherent_mcmc")
+    output_dir.mkdir(parents=True, exist_ok=True)
+    map_plot.savefig(output_dir / "map_warmup.png", dpi=150)
+    plt.close(map_plot)
     return MCMCResult(
         samples=sample_tensor,
         acceptance_rate=acceptance_rate,

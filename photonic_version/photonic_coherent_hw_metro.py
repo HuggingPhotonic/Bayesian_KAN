@@ -32,13 +32,13 @@ def run_metropolis_inference() -> None:
     torch.manual_seed(42)
     device = get_device()
 
-    n_train = 256
+    n_train = 500
     X_train = torch.rand(n_train, 1, device=device) * 2 - 1
     y_train = target_function(X_train)
 
     layer_sizes: Sequence[int] = (1, 16, 16, 1)
     basis_kwargs = {
-        "num_rings": 12,
+        "num_rings": 8,
         "wl_nm_range": (1546.0, 1554.0),
         "R_um": 30.0,
         "neff": 2.34,
@@ -78,16 +78,16 @@ def run_metropolis_inference() -> None:
         print(f"MAP test MSE: {map_mse:.6f}")
 
     config = MetropolisConfig(
-        n_samples=5000,
-        burn_in=2000,
+        n_samples=1000,
+        burn_in=100,
         step_size=1e-3,
         noise_var=0.01,
-        prior_var=2.0,
+        prior_var=1.0,
     )
 
     print("\n=== Starting Metropolis sampling from MAP estimate ===")
 
-    X_eval = torch.linspace(-1, 1, 800, device=device).unsqueeze(-1)
+    X_eval = torch.linspace(-1, 1, 500, device=device).unsqueeze(-1)
     result = run_metropolis(model, X_train, y_train, X_eval, config)
 
     output_dir = Path(__file__).resolve().parent / "results" / "hardware_coherent_mcmc"
