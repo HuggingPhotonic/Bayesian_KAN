@@ -17,7 +17,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from inference import HMCConfig, run_hmc
-from photonic_version.photonic_coherent_hw_kan import HardwareCoherentPhotonicKAN
+from photonic_version.photonic_coherent_hw_det import HardwareCoherentPhotonicKAN
 from photonic_version.photonic_kan import target_function
 from photonic_version.utils import get_device
 

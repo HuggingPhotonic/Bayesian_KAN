@@ -52,9 +52,9 @@ def run_variational_training() -> None:
     X_train = torch.rand(n_train, 1, device=device) * 2 - 1
     y_train = target_function(X_train)
 
-    layer_sizes = (1, 32, 32, 1)
+    layer_sizes = (1, 16, 16, 1)
     basis_kwargs = {
-        "num_rings": 16,
+        "num_rings": 8,
         "wl_nm_range": (1546.0, 1554.0),
         "R_um": 30.0,
         "neff": 2.34,
@@ -66,11 +66,37 @@ def run_variational_training() -> None:
     model = BayesianHardwareIncoherentPhotonicKAN(layer_sizes, basis_kwargs=basis_kwargs).to(device)
     summarise_parameters(model)
 
+    def log_parameter_statistics(epoch: int) -> None:
+        with torch.no_grad():
+            gain_means = []
+            base_means = []
+            ring_phase_means = []
+            ring_coupling_means = []
+            for layer in model.layers:
+                mixer = getattr(layer, "voa_mixer", None)
+                if mixer is None:
+                    continue
+                if hasattr(mixer, "gain_mean"):
+                    gain_means.append(mixer.gain_mean.abs().mean().item())
+                base_means.append(layer.base_weight.abs().mean().item())
+                if hasattr(layer, "wg_phase_mean"):
+                    ring_phase_means.append(layer.wg_phase_mean.abs().mean().item())
+                if hasattr(layer, "dc_coupling_mean"):
+                    ring_coupling_means.append(layer.dc_coupling_mean.abs().mean().item())
+            gain_avg = sum(gain_means) / len(gain_means) if gain_means else 0.0
+            base_avg = sum(base_means) / len(base_means) if base_means else 0.0
+            ring_phase_avg = sum(ring_phase_means) / len(ring_phase_means) if ring_phase_means else 0.0
+            ring_coupling_avg = sum(ring_coupling_means) / len(ring_coupling_means) if ring_coupling_means else 0.0
+            print(
+                f"[Epoch {epoch}] |gain|={gain_avg:.4f} |base|={base_avg:.4f} "
+                f"|ring_phase|={ring_phase_avg:.4f} |ring_coupling_raw|={ring_coupling_avg:.4f}"
+            )
+
     config = VIConfig(
         epochs=2000,
         lr=5e-4,
         weight_decay=5e-5,
-        kl_max=1e-3,
+        kl_max=1e-2,
         kl_warmup_epochs=500,
         n_samples=4,
         grad_clip=1.0,
@@ -78,23 +104,29 @@ def run_variational_training() -> None:
     )
 
     X_eval = torch.linspace(-1, 1, 800, device=device).unsqueeze(-1)
-    result = train_vi(model, X_train, y_train, X_eval, config)
+    result = train_vi(model, X_train, y_train, X_eval, config, callback=log_parameter_statistics)
 
     output_dir = Path(__file__).resolve().parent / "results" / "hardware_incoherent_bayes"
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    plt.figure(figsize=(10, 4))
-    plt.plot(result.losses.numpy(), label="ELBO")
-    plt.plot(result.recon_losses.numpy(), label="Reconstruction")
-    plt.plot(result.kl_terms.numpy(), label="KL")
-    plt.xlabel("Epoch")
-    plt.ylabel("Loss")
-    plt.title("Bayesian HW Photonic KAN (incoherent) VI losses")
-    plt.legend()
-    plt.grid(True, alpha=0.3)
-    plt.tight_layout()
-    plt.savefig(output_dir / "training_losses.png", dpi=150)
-    plt.close()
+    fig, axes = plt.subplots(3, 1, figsize=(10, 8), sharex=True)
+    axes[0].plot(result.losses.numpy(), color="tab:blue")
+    axes[0].set_ylabel("ELBO")
+    axes[0].grid(True, alpha=0.3)
+    axes[0].set_title("Bayesian HW Photonic KAN (incoherent) VI losses")
+
+    axes[1].plot(result.recon_losses.numpy(), color="tab:green")
+    axes[1].set_ylabel("Reconstruction")
+    axes[1].grid(True, alpha=0.3)
+
+    axes[2].plot(result.kl_terms.numpy(), color="tab:orange")
+    axes[2].set_ylabel("KL")
+    axes[2].set_xlabel("Epoch")
+    axes[2].grid(True, alpha=0.3)
+
+    fig.tight_layout()
+    fig.savefig(output_dir / "training_losses.png", dpi=150)
+    plt.close(fig)
 
     X_eval_np = X_eval.squeeze().cpu().numpy()
     mean = result.mean.squeeze().numpy()

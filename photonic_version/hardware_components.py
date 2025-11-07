@@ -127,19 +127,19 @@ class TrainableMZIArray(nn.Module):
         # large initial interference spikes during training.
         nn.init.constant_(self.theta, -3.0)
 
-    def _complex_weights(self) -> torch.Tensor:
+    def _weight_components(
+        self, dtype: torch.dtype, device: torch.device
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
-        Compute complex weights from the current MZI settings.
-
-        Returns
-        -------
-        torch.Tensor
-            Complex weights with shape (in_features, out_features, num_rings).
+        Compute real/imaginary weight components from the current MZI settings.
         """
 
-        amp = torch.sin(torch.nn.functional.sigmoid(self.theta) * math.pi * 0.5) ** 2
-        phase = self.phase()
-        return amp * torch.exp(1j * phase)
+        theta = self.theta.to(device=device, dtype=dtype)
+        amp = torch.sin(torch.nn.functional.sigmoid(theta) * math.pi * 0.5) ** 2
+        phase = self.phase().to(device=device, dtype=dtype)
+        real = amp * torch.cos(phase)
+        imag = amp * torch.sin(phase)
+        return real, imag
 
     def forward(self, basis_field: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         """
@@ -161,13 +161,18 @@ class TrainableMZIArray(nn.Module):
         if basis_field.dim() != 4 or basis_field.size(-1) != 2:
             raise ValueError("basis_field must be [batch, in_features, num_rings, 2].")
 
-        basis_complex = torch.view_as_complex(basis_field.contiguous())
-        weights = self._complex_weights()
+        dtype = basis_field.dtype
+        device = basis_field.device
+        basis_real = basis_field[..., 0]
+        basis_imag = basis_field[..., 1]
+        weight_real, weight_imag = self._weight_components(dtype=dtype, device=device)
 
-        combined = torch.einsum("bin,ion->bo", basis_complex, weights)
-        combined_realimag = torch.view_as_real(combined)  # (batch, out_features, 2)
-        real = combined_realimag[..., 0]
-        imag = combined_realimag[..., 1]
+        real = torch.einsum("bin,ion->bo", basis_real, weight_real) - torch.einsum(
+            "bin,ion->bo", basis_imag, weight_imag
+        )
+        imag = torch.einsum("bin,ion->bo", basis_real, weight_imag) + torch.einsum(
+            "bin,ion->bo", basis_imag, weight_real
+        )
         return real, imag
 
 
@@ -206,6 +211,9 @@ class HardwareCoherentMixer(nn.Module):
                 f"Expected last dimension 2*num_rings={2*self.num_rings}, "
                 f"got {features}."
             )
+        dtype = self.mzi_bank.theta.dtype
+        device = self.mzi_bank.theta.device
+        basis_field = basis_field.to(dtype=dtype, device=device)
         reshaped = basis_field.view(batch, in_features, self.num_rings, 2).contiguous()
         real, imag = self.mzi_bank(reshaped)
         # Here we return only the real component; applications that require both

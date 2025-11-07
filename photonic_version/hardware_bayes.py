@@ -49,8 +49,8 @@ class BayesianVOAArray(nn.Module):
     def __init__(self, in_features: int, out_features: int, num_rings: int):
         super().__init__()
         shape = (in_features, out_features, num_rings)
-        self.gain_mean = nn.Parameter(torch.zeros(shape))
-        self.gain_log_var = nn.Parameter(torch.full(shape, -4.0))
+        self.gain_mean = nn.Parameter(torch.randn(shape) * 0.05)
+        self.gain_log_var = nn.Parameter(torch.full(shape, -6.0))
 
     def forward(self, basis_power: torch.Tensor, *, sample: bool, n_samples: int = 1):
         draws = []
@@ -72,7 +72,7 @@ class BayesianPhaseShifter(nn.Module):
     def __init__(self, shape: torch.Size):
         super().__init__()
         self.mean = nn.Parameter(torch.zeros(shape))
-        self.log_var = nn.Parameter(torch.full(shape, -4.0))
+        self.log_var = nn.Parameter(torch.full(shape, -6.0))
 
     def forward(self, *, sample: bool) -> Tuple[torch.Tensor, torch.Tensor]:
         raw, kl = _sample_diag_gaussian(self.mean, self.log_var, sample)
@@ -87,13 +87,13 @@ class BayesianMZIArray(nn.Module):
     def __init__(self, in_features: int, out_features: int, num_rings: int):
         super().__init__()
         shape = (in_features, out_features, num_rings)
-        self.theta_mean = nn.Parameter(torch.zeros(shape))
-        self.theta_log_var = nn.Parameter(torch.full(shape, -4.0))
+        self.theta_mean = nn.Parameter(torch.randn(shape) * 0.05)
+        self.theta_log_var = nn.Parameter(torch.full(shape, -6.0))
         self.phase = BayesianPhaseShifter(shape)
 
     def _amplitude(self, theta_sample: torch.Tensor) -> torch.Tensor:
-        # Use sigmoid to map to (0, 1), providing smoother gradients near 0.
-        return torch.sigmoid(theta_sample)
+        # Map to (-0.5, 0.5) for centered, small-amplitude initial weights.
+        return 0.5 * torch.tanh(theta_sample)
 
     def forward(
         self,
@@ -159,12 +159,40 @@ class BayesianHardwarePhotonicIncoherentBasis(PhotonicIncoherentBasis):
         if hasattr(self, "coeffs"):
             del self.coeffs
         self.voa_mixer = BayesianVOAArray(in_features, out_features, num_rings)
+        phase_vals = []
+        coupling_vals = []
+        for ring in self.rings:
+            phase_param = ring.wg.phase.detach().float()
+            phase_vals.append(phase_param)
+            ring.wg.phase.requires_grad_(False)
+            coupling_param = ring.dc._coupling.detach().float().clamp(1e-3, 1 - 1e-3)
+            coupling_vals.append(torch.logit(coupling_param))
+            ring.dc._coupling.requires_grad_(False)
+        self.wg_phase_mean = nn.Parameter(torch.stack(phase_vals))
+        self.wg_phase_log_var = nn.Parameter(torch.full((num_rings,), -6.0))
+        self.dc_coupling_mean = nn.Parameter(torch.stack(coupling_vals))
+        self.dc_coupling_log_var = nn.Parameter(torch.full((num_rings,), -6.0))
 
     def forward(self, x: torch.Tensor, sample: bool = True, n_samples: int = 1):
+        ring_kl = self._sample_ring_parameters(sample)
         basis = self._evaluate_basis(x)
         mixed, kl = self.voa_mixer(basis, sample=sample, n_samples=n_samples)
         residual = x @ self.base_weight
-        return mixed + residual, kl
+        return mixed + residual, kl + ring_kl
+
+    def _sample_ring_parameters(self, sample: bool) -> torch.Tensor:
+        phase_draw, kl_phase = _sample_diag_gaussian(
+            self.wg_phase_mean, self.wg_phase_log_var, sample
+        )
+        coupling_raw, kl_coupling = _sample_diag_gaussian(
+            self.dc_coupling_mean, self.dc_coupling_log_var, sample
+        )
+        coupling_draw = torch.sigmoid(coupling_raw).clamp_(1e-3, 1 - 1e-3)
+        total_kl = kl_phase + kl_coupling
+        for idx, ring in enumerate(self.rings):
+            ring.wg.phase.data = phase_draw[idx].detach().cpu()
+            ring.dc._coupling.data = coupling_draw[idx].detach().cpu()
+        return total_kl
 
 
 class BayesianHardwarePhotonicCoherentBasis(PhotonicCoherentBasis):
@@ -202,8 +230,22 @@ class BayesianHardwarePhotonicCoherentBasis(PhotonicCoherentBasis):
         if hasattr(self, "coeffs"):
             del self.coeffs
         self.mzi_mixer = BayesianMZIArray(in_features, out_features, num_rings)
+        phase_vals = []
+        coupling_vals = []
+        for ring in self.rings:
+            phase_param = ring.wg.phase.detach().float()
+            phase_vals.append(phase_param)
+            ring.wg.phase.requires_grad_(False)
+            coupling_param = ring.dc._coupling.detach().float().clamp(1e-3, 1 - 1e-3)
+            coupling_vals.append(torch.logit(coupling_param))
+            ring.dc._coupling.requires_grad_(False)
+        self.wg_phase_mean = nn.Parameter(torch.stack(phase_vals))
+        self.wg_phase_log_var = nn.Parameter(torch.full((num_rings,), -6.0))
+        self.dc_coupling_mean = nn.Parameter(torch.stack(coupling_vals))
+        self.dc_coupling_log_var = nn.Parameter(torch.full((num_rings,), -6.0))
 
     def forward(self, x: torch.Tensor, sample: bool = True, n_samples: int = 1):
+        ring_kl = self._sample_ring_parameters(sample)
         basis = self._evaluate_basis(x)
         batch, in_features, feat = basis.shape
         num_rings = self.num_rings
@@ -214,4 +256,18 @@ class BayesianHardwarePhotonicCoherentBasis(PhotonicCoherentBasis):
         # Combine residual (real) with the real component of the coherent sum.
         mixed_real = mixed_complex[..., 0]
         combined = mixed_real + residual
-        return combined, kl
+        return combined, kl + ring_kl
+
+    def _sample_ring_parameters(self, sample: bool) -> torch.Tensor:
+        phase_draw, kl_phase = _sample_diag_gaussian(
+            self.wg_phase_mean, self.wg_phase_log_var, sample
+        )
+        coupling_raw, kl_coupling = _sample_diag_gaussian(
+            self.dc_coupling_mean, self.dc_coupling_log_var, sample
+        )
+        coupling_draw = torch.sigmoid(coupling_raw).clamp_(1e-3, 1 - 1e-3)
+        total_kl = kl_phase + kl_coupling
+        for idx, ring in enumerate(self.rings):
+            ring.wg.phase.data = phase_draw[idx].detach().cpu()
+            ring.dc._coupling.data = coupling_draw[idx].detach().cpu()
+        return total_kl

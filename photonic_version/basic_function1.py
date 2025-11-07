@@ -55,9 +55,9 @@ class AllPassRing(pt.Network):
             neff=neff,
             ng=ng,
             loss=loss_dB_cm,
-            trainable=False,
+            trainable=True,
         )
-        self.dc = pt.DirectionalCoupler(coupling=kappa, trainable=False)
+        self.dc = pt.DirectionalCoupler(coupling=kappa, trainable=True)
 
         # Close the ring: dc:2 -> wg -> dc:3.
         self.link("dc:2", "0:wg:1", "3:dc")
@@ -127,7 +127,7 @@ class MicroringBasisBase(nn.Module):
         self.variational = variational
 
         offsets = (
-            torch.linspace(-math.pi, math.pi, num_rings)
+            torch.linspace(-math.pi, math.pi, num_rings, dtype=torch.float32)
             if phase_offsets is None
             else torch.tensor(list(phase_offsets), dtype=torch.float32)
         )
@@ -136,11 +136,13 @@ class MicroringBasisBase(nn.Module):
         self.register_buffer("phase_offsets", offsets)
 
         ring_length = 2 * math.pi * (R_um * 1e-6)
-        center_wl = 0.5 * (wl_min_nm + wl_max_nm) * 1e-9
+        center_wl = torch.tensor(
+            0.5 * (wl_min_nm + wl_max_nm) * 1e-9, dtype=torch.float32
+        )
 
         # Translate desired phase offsets into effective-index perturbations.
-        delta_neff = offsets.double() * center_wl / (2 * math.pi * ring_length)
-        base_neff = torch.full((num_rings,), float(neff), dtype=torch.float64)
+        delta_neff = offsets * center_wl / (2 * math.pi * ring_length)
+        base_neff = torch.full((num_rings,), float(neff), dtype=torch.float32)
         neff_each = base_neff + delta_neff
 
         # Instantiate one ring per phase-offset (effective-index shift).

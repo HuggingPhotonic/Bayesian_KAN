@@ -110,6 +110,6 @@ class HardwarePhotonicCoherentBasis(PhotonicCoherentBasis):
     def forward(self, x: torch.Tensor, sample: bool = True, n_samples: int = 1):
         basis = self._evaluate_basis(x)
         mixed = self.mzi_mixer(basis)
-        residual = x @ self.base_weight
+        residual = x @ self.base_weight.to(dtype=x.dtype, device=x.device)
         kl = torch.zeros(1, device=x.device, dtype=x.dtype)
         return mixed + residual, kl

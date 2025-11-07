@@ -99,10 +99,12 @@ class PhotonicTorchBasis(nn.Module):
         self.variational = variational
 
         ring_length = 2 * math.pi * (R_um * 1e-6)
-        center_wl = 0.5 * (wl_min_nm + wl_max_nm) * 1e-9
+        center_wl = torch.tensor(
+            0.5 * (wl_min_nm + wl_max_nm) * 1e-9, dtype=torch.float32
+        )
 
         if phase_offsets is None:
-            offsets = torch.linspace(-math.pi, math.pi, num_rings)
+            offsets = torch.linspace(-math.pi, math.pi, num_rings, dtype=torch.float32)
         else:
             offsets = torch.tensor(list(phase_offsets), dtype=torch.float32)
             if offsets.numel() != num_rings:
@@ -110,8 +112,8 @@ class PhotonicTorchBasis(nn.Module):
         self.register_buffer("phase_offsets", offsets)
 
         # Convert phase offsets into effective index perturbations at centre λ.
-        delta_neff = offsets.double() * center_wl / (2 * math.pi * ring_length)
-        base_neff = torch.full((num_rings,), float(neff), dtype=torch.float64)
+        delta_neff = offsets * center_wl / (2 * math.pi * ring_length)
+        base_neff = torch.full((num_rings,), float(neff), dtype=torch.float32)
         neff_each = base_neff + delta_neff
 
         rings = []
@@ -201,4 +203,3 @@ class PhotonicTorchBasis(nn.Module):
             - torch.log(var / self.prior_var)
         )
         return kl
-

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, Any
+from typing import Dict, Any, Callable, Optional
 import torch
 import torch.nn as nn
 from tqdm.auto import trange
@@ -12,7 +12,7 @@ class VIConfig:
     epochs: int = 2000
     lr: float = 5e-4
     weight_decay: float = 1e-4
-    kl_max: float = 1e-3
+    kl_max: float = 1e-1
     kl_warmup_epochs: int = 300
     scheduler_step: int = 300
     scheduler_gamma: float = 0.5
@@ -38,6 +38,7 @@ def train_vi(
     y_train: torch.Tensor,
     X_eval: torch.Tensor,
     config: VIConfig,
+    callback: Optional[Callable[[int], None]] = None,
 ) -> VIResult:
     optimizer = torch.optim.Adam(
         model.parameters(), lr=config.lr, weight_decay=config.weight_decay
@@ -52,13 +53,19 @@ def train_vi(
     kl_terms = []
 
     progress = trange(config.epochs, desc="VI Training", leave=True)
+    warmup_steps = max(1, int(0.3 * config.epochs))
     for epoch in progress:
         model.train()
         optimizer.zero_grad()
 
         preds, kl = model(X_train, sample=True, n_samples=config.n_samples)
         recon = mse_loss(preds, y_train)
-        kl_weight = config.kl_max * min(1.0, (epoch + 1) / config.kl_warmup_epochs)
+
+        # KL annealing: gradually increase KL weight from 0 to kl_max
+        warmup_frac = min(1.0, (epoch + 1) / config.kl_warmup_epochs)
+        kl_weight = config.kl_max * warmup_frac
+
+        # ELBO loss: reconstruction + KL divergence
         loss = recon + kl_weight * kl / X_train.size(0)
 
         loss.backward()
@@ -69,6 +76,9 @@ def train_vi(
         losses.append(loss.detach().cpu())
         recon_losses.append(recon.detach().cpu())
         kl_terms.append(kl.detach().cpu())
+        if callback is not None:
+            callback(epoch + 1)
+
         progress.set_postfix(
             loss=loss.detach().item(),
             recon=recon.detach().item(),

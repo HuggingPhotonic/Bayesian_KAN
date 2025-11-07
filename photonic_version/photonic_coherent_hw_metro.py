@@ -17,7 +17,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from inference import MetropolisConfig, run_metropolis
-from photonic_version.photonic_coherent_hw_kan import HardwareCoherentPhotonicKAN
+from photonic_version.photonic_coherent_hw_det import HardwareCoherentPhotonicKAN
 from photonic_version.photonic_kan import target_function
 from photonic_version.utils import get_device
 
@@ -50,13 +50,42 @@ def run_metropolis_inference() -> None:
     model = HardwareCoherentPhotonicKAN(layer_sizes, basis_kwargs=basis_kwargs).to(device)
     summarise_parameters(model)
 
+    # Pre-train the model to find MAP estimate
+    print("\n=== Finding MAP estimate via pre-training ===")
+    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3, weight_decay=1e-4)
+    mse_loss = nn.MSELoss()
+
+    map_epochs = 1000
+    for epoch in range(map_epochs):
+        optimizer.zero_grad()
+        preds = model(X_train)
+        loss = mse_loss(preds, y_train)
+        loss.backward()
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+        optimizer.step()
+
+        if (epoch + 1) % 200 == 0:
+            print(f"Epoch {epoch+1}/{map_epochs}, Loss: {loss.item():.6f}")
+
+    print(f"MAP estimation complete. Final loss: {loss.item():.6f}")
+
+    # Evaluate MAP estimate on test set
+    with torch.no_grad():
+        X_eval_temp = torch.linspace(-1, 1, 100, device=device).unsqueeze(-1)
+        y_eval_temp = model(X_eval_temp)
+        y_true_temp = target_function(X_eval_temp)
+        map_mse = nn.MSELoss()(y_eval_temp, y_true_temp).item()
+        print(f"MAP test MSE: {map_mse:.6f}")
+
     config = MetropolisConfig(
-        n_samples=600,
-        burn_in=400,
-        step_size=1e-4,
-        noise_var=0.05,
-        prior_var=1.0,
+        n_samples=5000,
+        burn_in=2000,
+        step_size=1e-3,
+        noise_var=0.01,
+        prior_var=2.0,
     )
+
+    print("\n=== Starting Metropolis sampling from MAP estimate ===")
 
     X_eval = torch.linspace(-1, 1, 800, device=device).unsqueeze(-1)
     result = run_metropolis(model, X_train, y_train, X_eval, config)
