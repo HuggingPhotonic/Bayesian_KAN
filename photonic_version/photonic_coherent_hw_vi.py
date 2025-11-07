@@ -49,7 +49,7 @@ def run_variational_training() -> None:
     torch.manual_seed(42)
     device = get_device()
 
-    n_train = 2048
+    n_train = 512
     X_train = torch.rand(n_train, 1, device=device) * 2 - 1
     y_train = target_function(X_train)
 
@@ -61,7 +61,7 @@ def run_variational_training() -> None:
         "neff": 2.34,
         "ng": 4.2,
         "loss_dB_cm": 3.0,
-        "kappa": 0.2,
+        "kappa": 0.1,
     }
 
     model = BayesianHardwareCoherentPhotonicKAN(layer_sizes, basis_kwargs=basis_kwargs).to(device)
@@ -99,12 +99,12 @@ def run_variational_training() -> None:
             )
 
     config = VIConfig(
-        epochs=2000,           # Increased from 1000
-        lr=5e-4,               # Increased from 1.5e-4
+        epochs=1000,
+        lr=5e-4,
         weight_decay=5e-5,
-        kl_max=0.1,            # Increased from 1e-2 to 0.1
-        kl_warmup_epochs=400,  # Increased from 200
-        n_samples=50,
+        kl_max=1e-6,
+        kl_warmup_epochs=200,
+        n_samples=4,
         grad_clip=1.0,
         eval_samples=200,
     )
