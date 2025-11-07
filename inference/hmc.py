@@ -53,7 +53,7 @@ def run_hmc(
         theta = current.clone()
         grad = current_grad.clone()
         momentum = torch.randn_like(theta)
-        current_H = -current_logp + 0.5 * torch.sum(momentum ** 2)
+        current_H = -current_logp + 0.5 * torch.sum(momentum**2)
 
         theta_new = theta.clone()
         momentum_new = momentum.clone()
@@ -61,14 +61,19 @@ def run_hmc(
         for l in range(config.n_leapfrog):
             theta_new = theta_new + config.step_size * momentum_new
             logp_new, grad_new = log_posterior_and_grad(
-                model, theta_new, X_train, y_train, config.noise_var, config.prior_var
+                model,
+                theta_new,
+                X_train,
+                y_train,
+                config.noise_var,
+                config.prior_var,
             )
             if l != config.n_leapfrog - 1:
                 momentum_new = momentum_new + config.step_size * grad_new
         momentum_new = momentum_new + 0.5 * config.step_size * grad_new
         momentum_new = -momentum_new
 
-        new_H = -logp_new + 0.5 * torch.sum(momentum_new ** 2)
+        new_H = -logp_new + 0.5 * torch.sum(momentum_new**2)
         log_alpha = -(new_H - current_H)
         if torch.log(torch.rand(1, device=current.device)) < log_alpha:
             current = theta_new.detach()
@@ -96,3 +101,4 @@ def run_hmc(
         mean=mean.cpu(),
         std=std.cpu(),
     )
+

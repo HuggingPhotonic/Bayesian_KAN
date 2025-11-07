@@ -22,6 +22,7 @@ class LaplaceConfig:
     damping: float = 1e-2
     n_samples: int = 200
     grad_clip: float = 1.0
+    var_clip: float = 1.0
 
 
 @dataclass
@@ -39,6 +40,8 @@ def train_map(
     y_train: torch.Tensor,
     config: LaplaceConfig,
 ) -> torch.Tensor:
+    if config.map_epochs <= 0:
+        return torch.empty(0)
     optimizer = torch.optim.Adam(
         model.parameters(), lr=config.map_lr, weight_decay=config.weight_decay
     )
@@ -68,18 +71,36 @@ def hessian_diag(
     y_train: torch.Tensor,
     config: LaplaceConfig,
 ) -> torch.Tensor:
-    loss = negative_log_posterior(
-        model, X_train, y_train, config.noise_var, config.prior_var
-    )
-    params = [p for p in model.parameters()]
-    grads = torch.autograd.grad(loss, params, create_graph=True)
-    grad_vec = parameters_to_vector(grads)
-    diag = []
-    for i in range(grad_vec.numel()):
-        comp = grad_vec[i]
-        second = torch.autograd.grad(comp, params, retain_graph=True)
-        diag.append(parameters_to_vector(second)[i])
-    return torch.stack(diag).detach()
+    """
+    Compute diagonal Hessian approximation using empirical Fisher information.
+    More stable and efficient than exact diagonal Hessian computation.
+    """
+    model.eval()
+    params = [p for p in model.parameters() if p.requires_grad]
+    n_params = sum(p.numel() for p in params)
+    fisher_diag = torch.zeros(n_params, device=X_train.device)
+
+    # Use mini-batches for memory efficiency
+    batch_size = min(256, len(X_train))
+    n_batches = (len(X_train) + batch_size - 1) // batch_size
+
+    for i in range(n_batches):
+        start_idx = i * batch_size
+        end_idx = min((i + 1) * batch_size, len(X_train))
+        X_batch = X_train[start_idx:end_idx]
+        y_batch = y_train[start_idx:end_idx]
+
+        model.zero_grad()
+        loss = negative_log_posterior(
+            model, X_batch, y_batch, config.noise_var, config.prior_var
+        )
+        grads = torch.autograd.grad(loss, params, create_graph=False)
+        grad_vec = parameters_to_vector(grads)
+        fisher_diag += grad_vec ** 2
+
+    fisher_diag /= n_batches
+    model.train()
+    return fisher_diag.detach()
 
 
 def laplace_samples(
@@ -114,6 +135,7 @@ def run_laplace(
     theta_map = parameters_to_vector(model.parameters()).detach()
     diag = hessian_diag(model, X_train, y_train, config)
     var_diag = 1.0 / (diag + config.damping)
+    var_diag = torch.clamp(var_diag, min=1e-8, max=config.var_clip)
     preds = laplace_samples(model, theta_map, var_diag, X_eval, config.n_samples)
     mean, std = preds.mean(0).cpu(), preds.std(0).cpu()
     return LaplaceResult(

@@ -13,6 +13,7 @@ Fixed device parameters (buffers):
 
 from __future__ import annotations
 
+from datetime import datetime
 from pathlib import Path
 from typing import Sequence
 
@@ -27,7 +28,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from photonic_version.basis import PhotonicTorchBasis
+from photonic_version.bases import PhotonicTorchBasis
 from photonic_version.utils import get_device
 
 
@@ -115,7 +116,9 @@ def train_photonic_kan() -> None:
         preds_grid = model(grid)
         truth_grid = target_function(grid)
 
-    output_dir = Path(__file__).resolve().parent / "results"
+    script_name = Path(__file__).stem
+    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    output_dir = Path(__file__).resolve().parent / "results" / script_name / timestamp
     output_dir.mkdir(parents=True, exist_ok=True)
 
     plt.figure(figsize=(10, 4))
